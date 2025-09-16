@@ -295,7 +295,7 @@
 
         .delivery-header {
             display: flex;
-            justify-content: between;
+            justify-content: space-between;
             align-items: start;
             margin-bottom: 0.5rem;
         }
@@ -559,6 +559,9 @@
     <div class="toast" id="toast">
         <div id="toastMessage"></div>
     </div>
+
+    <!-- SheetJS (XLSX) -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.19.3/dist/xlsx.full.min.js"></script>
 
     <script>
         // Estado da aplicação
@@ -854,7 +857,6 @@
             e.preventDefault();
             
             // Validar campos obrigatórios
-            const formData = new FormData(e.target);
             const employee = {
                 name: document.getElementById('name').value,
                 cpf: document.getElementById('cpf').value,
@@ -882,7 +884,7 @@
                 employee: employee,
                 episDelivered: selectedEpis,
                 hasSignature: hasSignature,
-                signatureData: hasSignature ? canvas.toDataURL() : '',
+                signatureData: hasSignature && canvas ? canvas.toDataURL() : '',
                 deliveryDate: new Date().toISOString()
             };
             
@@ -977,55 +979,70 @@
             }
         }
 
+        // ====== EXPORTAÇÃO XLSX ======
         function exportToExcel() {
-            // Simular exportação (em uma aplicação real, geraria um arquivo Excel)
-            const csvContent = generateCSV();
-            downloadCSV(csvContent, `entregas_epi_${new Date().toISOString().split('T')[0]}.csv`);
-            showToast('Arquivo CSV exportado com sucesso!');
-        }
+            if (!window.XLSX) {
+                showToast('Biblioteca XLSX não carregada', true);
+                return;
+            }
 
-        function generateCSV() {
+            if (!deliveries || deliveries.length === 0) {
+                showToast('Não há entregas para exportar', true);
+                return;
+            }
+
             const headers = ['Data', 'Nome', 'CPF', 'Cargo', 'Setor', 'Matrícula', 'EPIs Entregues', 'Assinatura'];
-            let csv = headers.join(',') + '\n';
-            
-            deliveries.forEach(delivery => {
+
+            const rows = deliveries.map(delivery => {
                 const date = new Date(delivery.deliveryDate).toLocaleDateString('pt-BR');
                 const episNames = delivery.episDelivered.map(epiId => {
                     const epi = epis.find(e => e.id === epiId);
                     return epi ? epi.name : '';
-                }).join('; ');
-                
-                const row = [
+                }).filter(Boolean).join('; ');
+
+                return [
                     date,
                     delivery.employee.name,
-                    delivery.employee.cpf,
+                    delivery.employee.cpf,         // manter como texto
                     delivery.employee.position,
                     delivery.employee.sector,
                     delivery.employee.registration,
                     episNames,
                     delivery.hasSignature ? 'Sim' : 'Não'
                 ];
-                
-                csv += row.map(field => `"${field}"`).join(',') + '\n';
             });
-            
-            return csv;
-        }
 
-        function downloadCSV(content, filename) {
-            const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
-            const link = document.createElement('a');
-            
-            if (link.download !== undefined) {
-                const url = URL.createObjectURL(blob);
-                link.setAttribute('href', url);
-                link.setAttribute('download', filename);
-                link.style.visibility = 'hidden';
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
+            // cria worksheet (dados) e aplica larguras
+            const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+            ws['!cols'] = [
+                { wch: 10 },  // Data
+                { wch: 30 },  // Nome
+                { wch: 16 },  // CPF
+                { wch: 24 },  // Cargo
+                { wch: 18 },  // Setor
+                { wch: 14 },  // Matrícula
+                { wch: 40 },  // EPIs Entregues
+                { wch: 12 }   // Assinatura
+            ];
+
+            // força coluna CPF como texto
+            if (ws['!ref']) {
+                const range = XLSX.utils.decode_range(ws['!ref']);
+                for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+                    const cellRef = XLSX.utils.encode_cell({ r: R, c: 2 }); // coluna C (0-based)
+                    if (ws[cellRef]) ws[cellRef].t = 's';
+                }
             }
+
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Entregas');
+
+            const filename = `entregas_epi_${new Date().toISOString().slice(0,10)}.xlsx`;
+            XLSX.writeFile(wb, filename, { compression: true });
+
+            showToast('Arquivo XLSX exportado com sucesso!');
         }
+        // ====== FIM EXPORTAÇÃO XLSX ======
 
         function saveEpis() {
             localStorage.setItem('epis', JSON.stringify(epis));
